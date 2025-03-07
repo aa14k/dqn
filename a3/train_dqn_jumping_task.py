@@ -5,17 +5,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import jumping_task
 from jumping_task.envs import JumpTaskEnv
-import epsilon_greedy_explorers
+import a3.epsilon_greedy_explorers as epsilon_greedy_explorers
 import torch
 import torch.nn as nn
-import replay_buffer
+import a3.replay_buffer_old as replay_buffer_old
 import dqn
 import double_dqn
 import pandas as pd
 import os
 
 
-CCID="machado"
+CCID="aayoub"
 
 class LinearDecayEpsilonGreedyExploration:
     """Epsilon-greedy with constant epsilon.
@@ -153,7 +153,7 @@ if __name__ == '__main__':
     explorer = LinearDecayEpsilonGreedyExploration(1.0, 0.01, 10, num_actions)
     q_network = None # replace
     optimizer = torch.optim.Adam(q_network.parameters())
-    buffer = replay_buffer.ReplayBuffer(100, discount=0.99, n_step=1)
+    buffer = replay_buffer_old.ReplayBuffer(100, discount=0.99, n_step=1)
 
     agent = dqn.DQN(q_network, optimizer, buffer, explorer, 0.99, 10, gradient_update_frequency=1,
                     input_preprocessor=input_preprocessor,

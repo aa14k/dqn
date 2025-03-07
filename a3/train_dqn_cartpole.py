@@ -1,7 +1,7 @@
 import gymnasium as gym
 import agent_environment
 import numpy as np
-import epsilon_greedy_explorers
+import epsilon_greedy_explorers as epsilon_greedy_explorers
 import dqn
 import double_dqn
 import matplotlib.pyplot as plt
@@ -10,7 +10,7 @@ import torch.nn as nn
 import replay_buffer
 import argparse
 
-CCID="machado"
+CCID="aayoub"
 
 class LinearDecayEpsilonGreedyExploration:
     """Epsilon-greedy with constant epsilon.
@@ -147,6 +147,7 @@ if __name__ == '__main__':
     agent_class_to_text = {dqn.DQN: 'DQN', double_dqn.DoubleDQN: 'DoubleDQN'} 
 
     n_steps = [1, 5, 10]
+    seeds = np.arange(num_seeds) + 42
     n_step_colors = ['r', 'b', 'green']
     agent_classes = [dqn.DQN, double_dqn.DoubleDQN]
 
@@ -159,19 +160,23 @@ if __name__ == '__main__':
             agent_text = agent_class_to_text[agent_class]
             alg_returns = []
             alg_q_values = []
-            for seed in range(num_seeds):
+            for seed in seeds:
+                np.random.seed(seed)
+                torch.manual_seed(seed)
                 env = gym.make("CartPole-v1")
                 num_actions = env.action_space.n
                 q_network = CartpoleQNetwork(env.observation_space.low.size, num_actions)
                 optimizer = torch.optim.Adam(q_network.parameters(), lr=lr, eps=optimizer_eps)
                 explorer = LinearDecayEpsilonGreedyExploration(initial_epsilon, final_epsilon, epsilon_decay_steps, num_actions)
                 buffer = replay_buffer.ReplayBuffer(buffer_size, discount=discount, n_step=n_step)
-                agent = dqn.DQN(q_network, optimizer, buffer, explorer, discount, target_update_interval,
+                agent = agent_class(q_network, optimizer, buffer, explorer, discount, target_update_interval,
                                 min_replay_size_before_updates=min_replay_size_before_updates, minibatch_size=minibatch_size)
                 episode_returns, q_values = agent_environment.agent_environment_episode_loop(agent, env, num_training_episodes, args.debug, args.track_q)
                 alg_returns.append(episode_returns)
                 alg_q_values.append(q_values)
-
+            print('==================================')
+            print(f"Completed {agent_text} with {n_step}-step returns")
+            print('==================================')
             perf_dict[n_step][agent_text] = alg_returns
             q_val_dict[n_step][agent_text] = alg_q_values
 
