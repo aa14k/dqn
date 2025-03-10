@@ -188,7 +188,7 @@ def reward_phi(r):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     #parser.add_argument("--config", help="Which environment configuration (1, 2, or 3)", type=int, choices=[1, 2, 3], default=1)
-    parser.add_argument("--num-training-episodes", help="Number of training episodes", default=10_000, type=int)
+    parser.add_argument("--num-training-episodes", help="Number of training episodes", default=500, type=int)
     parser.add_argument("--run-label", help="Run label (akin to a random seed)", default=1, type=int)
     parser.add_argument("--min-replay-size-before-updates", help="Minimum replay buffer size before updates", default=32, type=int)
     parser.add_argument("--render", action='store_true')
@@ -204,11 +204,11 @@ if __name__ == '__main__':
     num_actions = env.action_space.n
     buffer_size = 25_000 
     discount = 0.99
-    n_step = 20
+    n_step = 10
 
     # Choose exploration strategy.
     if args.exploration == "epsilon":
-        explorer = LinearDecayEpsilonGreedyExploration(1.0, 0.001, 100_000, num_actions)
+        explorer = LinearDecayEpsilonGreedyExploration(1.0, 0.01, 1000, num_actions)
     else:
         explorer = CountBasedExploration(num_actions, bonus_coef=1000)
 
@@ -218,10 +218,10 @@ if __name__ == '__main__':
         torch.manual_seed(seed)
         # Use our convolutional Q-network for grayscale images.
         q_network = JumpingQNetwork(num_actions)
-        optimizer = torch.optim.Adam(q_network.parameters(), lr=0.001, eps=1e-4)
+        optimizer = torch.optim.Adam(q_network.parameters(), lr=0.01, eps=1e-2)
         buffer = replay_buffer.ReplayBuffer(buffer_size, discount=discount, n_step=n_step)
         agent = dqn.DQN(q_network, optimizer, buffer, explorer, discount, 100,
-                        min_replay_size_before_updates=500,
+                        min_replay_size_before_updates=512,
                         input_preprocessor=input_preprocessor,
                         minibatch_size=128,
                         reward_phi=reward_phi)
@@ -245,9 +245,9 @@ if __name__ == '__main__':
         df.to_csv(f'data/config_{config}_run_{seed}.csv', index=False)
         return episode_returns
 
-    seeds = [38,39,40]
+    seeds = [38]
     # Run experiments in parallel.
     for config in [1]:
         env = get_env(config, args.render)
-        all_episode_returns = Parallel(n_jobs=4)(delayed(run_experiment_for_seed)(seed) for seed in seeds)
+        all_episode_returns = Parallel(n_jobs=1)(delayed(run_experiment_for_seed)(seed) for seed in seeds)
         produce_plots_for_all_configs()

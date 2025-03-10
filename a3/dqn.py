@@ -114,10 +114,10 @@ class DQN:
 
         # ─────────────────────────────────────────────────────────────
         # 1) Compute absolute TD errors for each transition
-        #td_errors = (targets).detach().abs().cpu().numpy()
+        td_errors = (q_values-targets).detach().abs().cpu().numpy()
 
         # 2) Update replay buffer priorities with these TD errors
-        #self.replay_buffer.update_priorities(indices, td_errors)
+        self.replay_buffer.update_priorities(indices, td_errors)
         # ─────────────────────────────────────────────────────────────
 
         self.num_updates += 1
