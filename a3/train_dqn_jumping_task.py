@@ -183,7 +183,12 @@ def input_preprocessor(x):
     return x
 
 def reward_phi(r):
-    return r
+    if r == 1:
+        return 0
+    elif r > 1 :
+        return 1000
+    else:
+        return -1000
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -245,9 +250,9 @@ if __name__ == '__main__':
         df.to_csv(f'data/config_{config}_run_{seed}.csv', index=False)
         return episode_returns
 
-    seeds = [38]
+    seeds = [38,40,42]
     # Run experiments in parallel.
     for config in [1]:
         env = get_env(config, args.render)
-        all_episode_returns = Parallel(n_jobs=1)(delayed(run_experiment_for_seed)(seed) for seed in seeds)
+        all_episode_returns = Parallel(n_jobs=3)(delayed(run_experiment_for_seed)(seed) for seed in seeds)
         produce_plots_for_all_configs()
