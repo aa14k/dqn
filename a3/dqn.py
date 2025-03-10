@@ -69,41 +69,56 @@ class DQN:
         return targets
 
     def gradient_update(self):
-        # For prioritized replay, supply a beta value (could be annealed over training)
-        beta = 0.4  # or use self.beta if you maintain one
-        sample_result = self.replay_buffer.sample(self.minibatch_size, beta)
-        # Unpack the returned tuple
-        indices, minibatch, sampling_weights = sample_result
-        # Convert sampling weights to a tensor (for later use in loss weighting)
-        sampling_weights = torch.tensor(sampling_weights, dtype=torch.float32)
+        beta = 0.4
+        indices, minibatch, sampling_weights = self.replay_buffer.sample(self.minibatch_size, beta)
 
-        # Build tensors from the minibatch transitions.
-        states = torch.tensor(np.array([transition['state'] for transition in minibatch]), dtype=torch.float32)
-        actions = torch.tensor(np.array([transition['action'] for transition in minibatch]), dtype=torch.int64)
-        rewards = torch.tensor(np.array([transition['reward'] for transition in minibatch]), dtype=torch.float32)
-        next_states = torch.tensor(np.array([transition['next_state'] for transition in minibatch]), dtype=torch.float32)
-        discounts = torch.tensor(np.array([transition['discount'] for transition in minibatch]), dtype=torch.float32)
-        terminated = torch.tensor(np.array([transition['terminated'] for transition in minibatch]), dtype=torch.bool)
+        # Convert sampling weights (already a NumPy array) to a single Tensor
+        sampling_weights = torch.from_numpy(sampling_weights.astype(np.float32))
 
-        # Preprocess states if necessary.
+        # Gather each field into ONE NumPy array, then convert to Tensor
+        states_np = np.array([t['state'] for t in minibatch], dtype=np.float32)
+        actions_np = np.array([t['action'] for t in minibatch], dtype=np.int64)
+        rewards_np = np.array([t['reward'] for t in minibatch], dtype=np.float32)
+        next_states_np = np.array([t['next_state'] for t in minibatch], dtype=np.float32)
+        discounts_np = np.array([t['discount'] for t in minibatch], dtype=np.float32)
+        terminated_np = np.array([t['terminated'] for t in minibatch], dtype=bool)
+
+        # Convert all those NumPy arrays to Torch tensors
+        states = torch.from_numpy(states_np)
+        actions = torch.from_numpy(actions_np)
+        rewards = torch.from_numpy(rewards_np)
+        next_states = torch.from_numpy(next_states_np)
+        discounts = torch.from_numpy(discounts_np)
+        terminated = torch.from_numpy(terminated_np)
+
+        # Preprocess if needed
         states = self.input_preprocessor(states)
         next_states = self.input_preprocessor(next_states)
 
-        # Compute current Q-values for the taken actions.
-        q_values = self.q_network(states)
-        q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
+        q_values_all = self.q_network(states)
+        # gather Q for the chosen actions
+        q_values = q_values_all.gather(1, actions.unsqueeze(1)).squeeze(1)
 
-        # Compute target Q-values (this method should handle multi-step targets).
+        # Compute target Q-values
         targets = self.compute_targets(rewards, next_states, discounts, terminated)
 
-        # Compute loss with no reduction initially.
-        loss = torch.nn.functional.mse_loss(q_values, targets, reduction='none')
-        # Weight the loss by the importance sampling weights and average.
-        loss = (loss * sampling_weights.to(loss.device)).mean()
+        # MSE loss, no reduction
+        elementwise_loss = torch.nn.functional.mse_loss(q_values, targets, reduction='none')
+
+        # Multiply by sampling weights
+        loss = (elementwise_loss * sampling_weights.to(elementwise_loss.device)).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+        # ─────────────────────────────────────────────────────────────
+        # 1) Compute absolute TD errors for each transition
+        #td_errors = (targets).detach().abs().cpu().numpy()
+
+        # 2) Update replay buffer priorities with these TD errors
+        #self.replay_buffer.update_priorities(indices, td_errors)
+        # ─────────────────────────────────────────────────────────────
 
         self.num_updates += 1
         if self.num_updates % self.gradient_updates_per_target_refresh == 0:

@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-def agent_environment_episode_loop(agent, env, num_episodes, debug=False, track_q=False):
+def agent_environment_episode_loop(agent, env, num_episodes, debug=False, track_q=False,seed=None):
     episode_returns = []
     mean_q_predictions = []  # the average Q-value for all state-action pairs visited in the episode
     for episode in tqdm(range(num_episodes)):
@@ -33,11 +33,15 @@ def agent_environment_episode_loop(agent, env, num_episodes, debug=False, track_
             # End the episode if termination or truncation is signaled.
             if terminated or truncated:
                 break
-        if episode % 10 == 9:
-            print(total_return)
         episode_returns.append(total_return)
+        if episode > 103:
+            print('seed: ', seed, ' average return:' , np.mean(episode_returns[-100:]))
+            if total_return > 100:
+                print(total_return)
         if track_q:
-            mean_q_predictions.append(np.mean(episode_q_values))
+            if episode % 100 == 99:
+                mean_q_predictions.append(np.mean(episode_q_values))
+                print(np.mean(episode_q_values))
         if debug:
             print(f"Episode {episode}: Return = {total_return}")
     
