@@ -36,7 +36,7 @@ def agent_environment_episode_loop(agent, env, num_episodes, debug=False, track_
         episode_returns.append(total_return)
         if episode > 103:
             print('seed: ', seed, ' average return:' , np.mean(episode_returns[-100:]))
-            if total_return > 100:
+        if total_return > 100:
                 print(total_return)
         if track_q:
             if episode % 100 == 99:

@@ -183,44 +183,65 @@ def input_preprocessor(x):
     return x
 
 def reward_phi(r):
-    return r
+    if r == 1:
+        return 0
+    elif r > 1 :
+        return 1000
+    else:
+        return -1000
 
-def run_experiment_for_seed(seed, hyperparams, env_config, args):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    env = get_env(env_config, args.render)
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    #parser.add_argument("--config", help="Which environment configuration (1, 2, or 3)", type=int, choices=[1, 2, 3], default=1)
+    parser.add_argument("--num-training-episodes", help="Number of training episodes", default=500, type=int)
+    parser.add_argument("--run-label", help="Run label (akin to a random seed)", default=1, type=int)
+    parser.add_argument("--min-replay-size-before-updates", help="Minimum replay buffer size before updates", default=32, type=int)
+    parser.add_argument("--render", action='store_true')
+    parser.add_argument("--debug", action='store_true')
+    parser.add_argument("--track-q", action='store_true')
+    parser.add_argument("--exploration", choices=["epsilon", "count"], default="epsilon")
+    args = parser.parse_args()
+
+    if not os.path.exists("data"):
+        os.makedirs("data")
+    config = 1
+    env = get_env(config, args.render)
     num_actions = env.action_space.n
     buffer_size = 25_000 
-    lr = hyperparams['lr']
-    n_step = hyperparams['n_step']
-    minibatch_size = hyperparams['minibatch_size']
-    discount = hyperparams['discount']
-    num_updates_per_gradient = hyperparams['num_updates_per_gradient']
+    discount = 0.99
+    n_step = 10
 
+    # Choose exploration strategy.
     if args.exploration == "epsilon":
-        explorer = LinearDecayEpsilonGreedyExploration(1.0, 0.001, 10_000, num_actions)
+        explorer = LinearDecayEpsilonGreedyExploration(1.0, 0.01, 1000, num_actions)
     else:
         explorer = CountBasedExploration(num_actions, bonus_coef=1000)
 
-    q_network = JumpingQNetwork(num_actions)
-    optimizer = torch.optim.Adam(q_network.parameters(), lr=lr, eps=1e-4)
-    buffer = replay_buffer.ReplayBuffer(buffer_size, discount=discount, n_step=n_step)
-    agent = dqn.DQN(q_network, optimizer, buffer, explorer, discount, num_updates_per_gradient,
-                    min_replay_size_before_updates=500,
-                    input_preprocessor=input_preprocessor,
-                    minibatch_size=minibatch_size,
-                    reward_phi=reward_phi)
-    if args.exploration == "count":
-        def act_override(obs):
-            obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
-            processed_obs = agent.input_preprocessor(obs_tensor)
-            with torch.no_grad():
-                q_vals = agent.q_network(processed_obs).squeeze(0).cpu().numpy()
-            action = agent.explorer.select_action(q_vals, obs)
-            agent.last_state = obs
-            agent.last_action = action
-            return action
-        agent.act = act_override
+    # Define a function to run the experiment for one seed.
+    def run_experiment_for_seed(seed):
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        # Use our convolutional Q-network for grayscale images.
+        q_network = JumpingQNetwork(num_actions)
+        optimizer = torch.optim.Adam(q_network.parameters(), lr=0.01, eps=1e-2)
+        buffer = replay_buffer.ReplayBuffer(buffer_size, discount=discount, n_step=n_step)
+        agent = dqn.DQN(q_network, optimizer, buffer, explorer, discount, 100,
+                        min_replay_size_before_updates=512,
+                        input_preprocessor=input_preprocessor,
+                        minibatch_size=128,
+                        reward_phi=reward_phi)
+        # If count-based exploration is used, override act() to pass the raw observation.
+        if args.exploration == "count":
+            def act_override(obs):
+                obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+                processed_obs = agent.input_preprocessor(obs_tensor)
+                with torch.no_grad():
+                    q_vals = agent.q_network(processed_obs).squeeze(0).cpu().numpy()
+                action = agent.explorer.select_action(q_vals, obs)
+                agent.last_state = obs
+                agent.last_action = action
+                return action
+            agent.act = act_override
 
     print(f"Running training for seed {seed} with exploration '{args.exploration}' and hyperparams: {hyperparams}")
     episode_returns, _ = agent_environment.agent_environment_episode_loop(agent, env, args.num_training_episodes, args.debug, args.track_q, seed)
@@ -232,67 +253,9 @@ def run_experiment_for_seed(seed, hyperparams, env_config, args):
     df.to_csv(filename, index=False)
     return episode_returns
 
-def run_experiment_and_plot(hyperparams, env_config, args, seed):
-    # Run the experiment for a given hyperparameter configuration and then produce its plot.
-    run_experiment_for_seed(seed, hyperparams, env_config, args)
-    plot_hyperparam_results(hyperparams)
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--num-training-episodes", help="Number of training episodes", default=1_000, type=int)
-    parser.add_argument("--run-label", help="Run label (used as seed)", default=42, type=int)
-    parser.add_argument("--min-replay-size-before-updates", help="Minimum replay buffer size before updates", default=32, type=int)
-    parser.add_argument("--render", action='store_true')
-    parser.add_argument("--debug", action='store_true')
-    parser.add_argument("--track-q", action='store_true')
-    parser.add_argument("--exploration", choices=["epsilon", "count"], default="epsilon")
-    parser.add_argument("--sweep", action='store_true', help="Perform hyperparameter sweep over several values")
-    args = parser.parse_args()
-
-    if not os.path.exists("data"):
-        os.makedirs("data")
-    
-    env_config = 1
-    default_hyperparams = {
-        "lr": 0.001,
-        "n_step": 20,
-        "minibatch_size": 128,
-        "discount": 0.99,
-        "num_updates_per_gradient": 100
-    }
-    
-    # Use one seed per hyperparameter configuration
-    seed = args.run_label
-    
-    if args.sweep:
-        hyperparams_grid = {
-            "lr": [1e-1,1e-2,1e-3,1e-4,1e-5],
-            "n_step": [5,10,20],
-            "minibatch_size": [64, 128,256,512],
-            "discount": [0.9,0.95, 0.99],
-            "num_updates_per_gradient": [10, 100, 1000]
-        }
-        # Create a list of hyperparameter configurations from the grid.
-        hyperparams_list = []
-        for hp_values in itertools.product(
-                hyperparams_grid["num_updates_per_gradient"],
-                hyperparams_grid["minibatch_size"],
-                hyperparams_grid["n_step"],
-                hyperparams_grid["discount"],
-                hyperparams_grid["lr"]):
-            hyperparams_list.append({
-                "lr": hp_values[0],
-                "n_step": hp_values[1],
-                "minibatch_size": hp_values[2],
-                "discount": hp_values[3],
-                "num_updates_per_gradient": hp_values[4]
-            })
-        # Parallelize the hyperparameter sweep with Joblib.
-        Parallel(n_jobs=5)(
-            delayed(run_experiment_and_plot)(hyperparams, env_config, args, seed)
-            for hyperparams in hyperparams_list
-        )
-    else:
-        print(f"Running a single experiment with default hyperparameters: {default_hyperparams}")
-        run_experiment_for_seed(seed, default_hyperparams, env_config, args)
+    seeds = [38,40,42]
+    # Run experiments in parallel.
+    for config in [1]:
+        env = get_env(config, args.render)
+        all_episode_returns = Parallel(n_jobs=3)(delayed(run_experiment_for_seed)(seed) for seed in seeds)
         produce_plots_for_all_configs()
