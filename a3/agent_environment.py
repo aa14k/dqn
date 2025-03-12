@@ -34,11 +34,8 @@ def agent_environment_episode_loop(agent, env, num_episodes, debug=False, track_
             if terminated or truncated:
                 break
         episode_returns.append(total_return)
-        print(episode, total_return)
         if track_q:
-            if episode % 100 == 99:
-                mean_q_predictions.append(np.mean(episode_q_values))
-                print(np.mean(episode_q_values))
+            mean_q_predictions.append(np.mean(episode_q_values))
         if debug:
             print(f"Episode {episode}: Return = {total_return}")
     

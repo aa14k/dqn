@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import replay_buffer
 import argparse
-#from joblib import Parallel, delayed  # <-- For parallelization
+from joblib import Parallel, delayed  # <-- For parallelization
 
 CCID = "aayoub"
 
@@ -147,7 +147,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true", default=False)
     parser.add_argument("--track-q", action="store_true", default=False)
-    parser.add_argument("--num-runs", type=int, default=10)
+    parser.add_argument("--num-runs", type=int, default=5)
     args = parser.parse_args()
 
     num_seeds = args.num_runs
@@ -181,7 +181,8 @@ if __name__ == '__main__':
             agent_text = agent_class_to_text[agent_class]
 
             # Parallelize across seeds
-            results = [run_single_experiment(
+            results = Parallel(n_jobs=10)(
+                delayed(run_single_experiment)(
                     seed,
                     agent_class,
                     n_step,
@@ -200,7 +201,7 @@ if __name__ == '__main__':
                     args.track_q
                 )
                 for seed in seeds
-            ]
+            )
 
             # Separate the episode returns and q_values
             alg_returns, alg_q_values = zip(*results)
