@@ -37,8 +37,6 @@ MANIFEST
 *.spec
 
 #file
-*.pdf
-*.png
 
 # Installer logs
 pip-log.txt

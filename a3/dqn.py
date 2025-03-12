@@ -23,7 +23,8 @@ class DQN:
                  minibatch_size=32,
                  min_replay_size_before_updates=32,
                  track_statistics=False,
-                 reward_phi=lambda reward: reward):
+                 reward_phi=lambda reward: reward,
+                 replay_type = 'uniform'):
         self.q_network = q_network
         self.optimizer = optimizer
         self.target_network = target_network_refresh(self.q_network)
@@ -37,6 +38,7 @@ class DQN:
         self.min_replay_size_before_updates = min_replay_size_before_updates
         self.track_statistics = track_statistics
         self.reward_phi = reward_phi
+        self.replay_type = replay_type
 
         # Additional attributes for tracking gradient updates and transitions.
         self.num_updates = 0
@@ -114,10 +116,21 @@ class DQN:
 
         # ─────────────────────────────────────────────────────────────
         # 1) Compute absolute TD errors for each transition
-        td_errors = (q_values-targets).detach().abs().cpu().numpy()
+        if self.replay_type == 'tderror':
+            error = q_values-targets
+            errors = (error).detach().abs().cpu().numpy()
 
-        # 2) Update replay buffer priorities with these TD errors
-        self.replay_buffer.update_priorities(indices, td_errors)
+            # 2) Update replay buffer priorities with these TD errors
+            self.replay_buffer.update_priorities(indices, errors)
+        elif self.replay_type == 'targets':
+            error = targets
+            errors = (error).detach().abs().cpu().numpy()
+
+            # 2) Update replay buffer priorities with these TD errors
+            self.replay_buffer.update_priorities(indices, errors)
+        elif self.replay_type == 'uniform':
+            pass
+
         # ─────────────────────────────────────────────────────────────
 
         self.num_updates += 1
