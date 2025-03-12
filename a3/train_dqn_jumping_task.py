@@ -13,7 +13,6 @@ import dqn
 import double_dqn
 import pandas as pd
 import os
-from joblib import Parallel, delayed
 
 CCID = "aayoub"
 
@@ -280,5 +279,5 @@ if __name__ == '__main__':
     # Run experiments in parallel.
     for config in [args.config]:
         env = get_env(config, args.render)
-        all_episode_returns = Parallel(n_jobs=3)(delayed(run_experiment_for_seed)(seed) for seed in seeds)
+        #all_episode_returns = Parallel(n_jobs=3)(delayed(run_experiment_for_seed)(seed) for seed in seeds)
         produce_plots_for_all_configs()

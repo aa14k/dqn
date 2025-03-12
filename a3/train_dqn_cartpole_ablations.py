@@ -1,7 +1,7 @@
 import gymnasium as gym
 import agent_environment
 import numpy as np
-import epsilon_greedy_explorers as epsilon_greedy_explorers
+import epsilon_greedy_explorers
 import dqn
 import double_dqn
 import matplotlib.pyplot as plt
@@ -9,8 +9,9 @@ import torch
 import torch.nn as nn
 import replay_buffer
 import argparse
+#from joblib import Parallel, delayed
 
-CCID="aayoub"
+CCID = "aayoub"
 
 class LinearDecayEpsilonGreedyExploration:
     """Epsilon-greedy with linearly decaying epsilon.
@@ -41,7 +42,7 @@ class LinearDecayEpsilonGreedyExploration:
 class CartpoleQNetwork(nn.Module):
     def __init__(self, input_size, num_actions):
         super().__init__()
-        self.network = torch.nn.Sequential(
+        self.network = nn.Sequential(
             nn.Linear(input_size, 64), 
             nn.ReLU(),
             nn.Linear(64, 64),
@@ -54,11 +55,11 @@ class CartpoleQNetwork(nn.Module):
 
 
 def plot_alg_results(episode_returns_list, file, label="Algorithm", ylabel="Return", title="Episodic Returns"):
-    # Compute running average
+    # Compute running average (here simply the mean across runs)
     running_avg = np.mean(np.array(episode_returns_list), axis=0)
     plt.figure(figsize=(10, 6))
     plt.plot(range(len(running_avg)), running_avg, color='r', label=label)
-    plt.title(f"({CCID}){title}")
+    plt.title(f"({CCID}) {title}")
     plt.xlabel("Episode")
     plt.ylabel(ylabel)
     plt.legend()
@@ -72,13 +73,12 @@ def plot_many_algs(lists, labels, colors, file, ylabel="Return", title="Episodic
     for lst in lists:
         running_avgs.append(np.mean(np.array(lst), axis=0))
     plt.figure(figsize=(10, 6))
-    # If no colors provided, use default color cycle.
     for i in range(len(running_avgs)):
         if colors is not None:
             plt.plot(range(len(running_avgs[i])), running_avgs[i], color=colors[i], label=labels[i])
         else:
             plt.plot(range(len(running_avgs[i])), running_avgs[i], label=labels[i])
-    plt.title(f"({CCID}){title}")
+    plt.title(f"({CCID}) {title}")
     plt.xlabel("Episode")
     plt.ylabel(ylabel)
     plt.legend()
@@ -87,15 +87,64 @@ def plot_many_algs(lists, labels, colors, file, ylabel="Return", title="Episodic
     plt.close()
 
 
+def run_single_cartpole_experiment(
+    seed,
+    agent_class,
+    buffer_size,
+    target_update_interval,
+    n_step,
+    lr,
+    optimizer_eps,
+    initial_epsilon,
+    final_epsilon,
+    epsilon_decay_steps,
+    discount,
+    min_replay_size_before_updates,
+    minibatch_size,
+    num_training_episodes,
+    debug=False,
+    track_q=False
+):
+    """
+    Helper function to run a single Cartpole experiment with the given hyperparameters.
+    """
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    env = gym.make("CartPole-v1")
+    num_actions = env.action_space.n
+
+    q_network = CartpoleQNetwork(env.observation_space.low.size, num_actions)
+    optimizer = torch.optim.Adam(q_network.parameters(), lr=lr, eps=optimizer_eps)
+    explorer = LinearDecayEpsilonGreedyExploration(initial_epsilon, final_epsilon, epsilon_decay_steps, num_actions)
+    replay_buf = replay_buffer.ReplayBuffer(buffer_size, discount=discount, n_step=n_step)
+
+    agent = agent_class(
+        q_network,
+        optimizer,
+        replay_buf,
+        explorer,
+        discount,
+        target_update_interval,
+        min_replay_size_before_updates=min_replay_size_before_updates,
+        minibatch_size=minibatch_size
+    )
+
+    episode_returns, _ = agent_environment.agent_environment_episode_loop(
+        agent, env, num_training_episodes, debug, track_q
+    )
+    return episode_returns
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true", default=False)
     parser.add_argument("--track-q", action="store_true", default=False)
     parser.add_argument("--num-runs", type=int, default=5)
-    # New option "both" will run target and buffer ablations sequentially.
-    parser.add_argument("--ablation", type=str, default="none", choices=["none", "target", "buffer", "both"])
+    parser.add_argument("--ablation", type=str, default="target", choices=["target", "buffer"])
     args = parser.parse_args()
 
+    # Common hyperparameters.
     num_seeds = args.num_runs
     lr = 0.0001
     optimizer_eps = 1e-2
@@ -107,210 +156,126 @@ if __name__ == '__main__':
     minibatch_size = 128
     num_training_episodes = 500
 
-    agent_class_to_text = {dqn.DQN: 'DQN', double_dqn.DoubleDQN: 'DoubleDQN'}
+    agent_class_to_text = {dqn.DQN: 'DQN'}
 
-    if args.ablation == "both":
-        print('running experiments for both target and buffer ablations')
-        # ----------------------------
-        # Target Network Ablation (n_step fixed to 1)
-        # ----------------------------
-        target_update_intervals = [1, 10, 100]
-        perf_dict_target = {}
-        for t_update in target_update_intervals:
-            perf_dict_target[t_update] = {}
-            for agent_class in [dqn.DQN, double_dqn.DoubleDQN]:
-                agent_text = agent_class_to_text[agent_class]
-                returns_list = []
-                for seed in range(42, 42 + num_seeds):
-                    np.random.seed(seed)
-                    torch.manual_seed(seed)
-                    env = gym.make("CartPole-v1")
-                    num_actions = env.action_space.n
-                    q_network = CartpoleQNetwork(env.observation_space.low.size, num_actions)
-                    optimizer = torch.optim.Adam(q_network.parameters(), lr=lr, eps=optimizer_eps)
-                    explorer = LinearDecayEpsilonGreedyExploration(initial_epsilon, final_epsilon, epsilon_decay_steps, num_actions)
-                    buffer = replay_buffer.ReplayBuffer(25000, discount=discount, n_step=1)
-                    agent = agent_class(q_network, optimizer, buffer, explorer, discount, t_update,
-                                          min_replay_size_before_updates=min_replay_size_before_updates, minibatch_size=minibatch_size)
-                    episode_returns, _ = agent_environment.agent_environment_episode_loop(agent, env, num_training_episodes, args.debug, args.track_q)
-                    returns_list.append(episode_returns)
-                perf_dict_target[t_update][agent_text] = returns_list
-                print(f"Finished target update {t_update} for {agent_text}")
-
-        # ----------------------------
-        # Replay Buffer Ablation (n_step fixed to 1, target update fixed)
-        # ----------------------------
-        buffer_sizes = [100, 500, 5000, 25000]
-        target_update_interval = 100
-        perf_dict_buffer = {}
-        for buf_size in buffer_sizes:
-            perf_dict_buffer[buf_size] = {}
-            for agent_class in [dqn.DQN, double_dqn.DoubleDQN]:
-                agent_text = agent_class_to_text[agent_class]
-                returns_list = []
-                for seed in range(42, 42 + num_seeds):
-                    np.random.seed(seed)
-                    torch.manual_seed(seed)
-                    env = gym.make("CartPole-v1")
-                    num_actions = env.action_space.n
-                    q_network = CartpoleQNetwork(env.observation_space.low.size, num_actions)
-                    optimizer = torch.optim.Adam(q_network.parameters(), lr=lr, eps=optimizer_eps)
-                    explorer = LinearDecayEpsilonGreedyExploration(initial_epsilon, final_epsilon, epsilon_decay_steps, num_actions)
-                    buffer = replay_buffer.ReplayBuffer(buf_size, discount=discount, n_step=1)
-                    agent = agent_class(q_network, optimizer, buffer, explorer, discount, target_update_interval,
-                                          min_replay_size_before_updates=min_replay_size_before_updates, minibatch_size=minibatch_size)
-                    episode_returns, _ = agent_environment.agent_environment_episode_loop(agent, env, num_training_episodes, args.debug, args.track_q)
-                    returns_list.append(episode_returns)
-                print(f"Finished buffer size {buf_size} for {agent_text}")
-                perf_dict_buffer[buf_size][agent_text] = returns_list
-
-        # ----------------------------
-        # Plot Combined Target Ablation (all results in one plot)
-        # ----------------------------
-        combined_target_returns = []
-        combined_target_labels = []
-        for t_update in target_update_intervals:
-            for agent_text in ['DQN', 'DoubleDQN']:
-                combined_target_returns.append(perf_dict_target[t_update][agent_text])
-                combined_target_labels.append(f"{agent_text} (update {t_update})")
-        plot_many_algs(combined_target_returns, combined_target_labels, None, "combined_target_ablation.png", title="Combined Target Network Ablation")
-
-        # Plot per algorithm for target ablation
-        for agent_text in ['DQN', 'DoubleDQN']:
-            agent_returns = []
-            labels = []
-            for t_update in target_update_intervals:
-                agent_returns.append(perf_dict_target[t_update][agent_text])
-                labels.append(f"update {t_update}")
-            plot_many_algs(agent_returns, labels, None, f"{agent_text}_target_ablation.png", title=f"{agent_text} Target Network Ablation")
-
-        # ----------------------------
-        # Plot Combined Buffer Ablation (all results in one plot)
-        # ----------------------------
-        combined_buffer_returns = []
-        combined_buffer_labels = []
-        for buf_size in buffer_sizes:
-            for agent_text in ['DQN', 'DoubleDQN']:
-                combined_buffer_returns.append(perf_dict_buffer[buf_size][agent_text])
-                combined_buffer_labels.append(f"{agent_text} (buffer {buf_size})")
-        plot_many_algs(combined_buffer_returns, combined_buffer_labels, None, "combined_buffer_ablation.png", title="Combined Replay Buffer Ablation")
-
-        # Plot per algorithm for buffer ablation
-        for agent_text in ['DQN', 'DoubleDQN']:
-            agent_returns = []
-            labels = []
-            for buf_size in buffer_sizes:
-                agent_returns.append(perf_dict_buffer[buf_size][agent_text])
-                labels.append(f"buffer {buf_size}")
-            plot_many_algs(agent_returns, labels, None, f"{agent_text}_buffer_ablation.png", title=f"{agent_text} Replay Buffer Ablation")
-
-        # ----------------------------
-        # Plot Everything in One Plot (target and buffer results combined)
-        # ----------------------------
-        combined_all_returns = combined_target_returns + combined_buffer_returns
-        combined_all_labels = combined_target_labels + combined_buffer_labels
-        plot_many_algs(combined_all_returns, combined_all_labels, None, "combined_all_ablation.png", title="All Ablation Results Combined")
-
-        # Plot per algorithm for all experiments
-        for agent_text in ['DQN', 'DoubleDQN']:
-            agent_all_returns = []
-            agent_all_labels = []
-            # Add target ablation results
-            for t_update in target_update_intervals:
-                agent_all_returns.append(perf_dict_target[t_update][agent_text])
-                agent_all_labels.append(f"target {t_update}")
-            # Add buffer ablation results
-            for buf_size in buffer_sizes:
-                agent_all_returns.append(perf_dict_buffer[buf_size][agent_text])
-                agent_all_labels.append(f"buffer {buf_size}")
-            plot_many_algs(agent_all_returns, agent_all_labels, None, f"{agent_text}_all_ablation.png", title=f"{agent_text} All Ablation Results")
-
-    elif args.ablation == "target":
-        # Target ablation only (n_step=1)
+    if args.ablation == "target":
+        # --------------------------------------------------------------------
+        # Experiment 1: Target Network Ablation Study
+        #
+        # For n=1, we test three target network update frequencies:
+        #   - update every 1 step
+        #   - update every 10 steps
+        #   - update every 100 steps
+        # --------------------------------------------------------------------
         n_step = 1
         buffer_size = 25000
         target_update_intervals = [1, 10, 100]
         perf_dict = {}
+
         for t_update in target_update_intervals:
             perf_dict[t_update] = {}
-            for agent_class in [dqn.DQN, double_dqn.DoubleDQN]:
+            for agent_class in [dqn.DQN]:
                 agent_text = agent_class_to_text[agent_class]
-                returns_list = []
-                for seed in range(42, 42 + num_seeds):
-                    np.random.seed(seed)
-                    torch.manual_seed(seed)
-                    env = gym.make("CartPole-v1")
-                    num_actions = env.action_space.n
-                    q_network = CartpoleQNetwork(env.observation_space.low.size, num_actions)
-                    optimizer = torch.optim.Adam(q_network.parameters(), lr=lr, eps=optimizer_eps)
-                    explorer = LinearDecayEpsilonGreedyExploration(initial_epsilon, final_epsilon, epsilon_decay_steps, num_actions)
-                    buffer = replay_buffer.ReplayBuffer(buffer_size, discount=discount, n_step=n_step)
-                    agent = agent_class(q_network, optimizer, buffer, explorer, discount, t_update,
-                                          min_replay_size_before_updates=min_replay_size_before_updates, minibatch_size=minibatch_size)
-                    episode_returns, _ = agent_environment.agent_environment_episode_loop(agent, env, num_training_episodes, args.debug, args.track_q)
-                    returns_list.append(episode_returns)
-                perf_dict[t_update][agent_text] = returns_list
-        # Plot individual and combined target ablation plots.
+
+                # Run experiments in parallel across seeds
+                results = [run_single_cartpole_experiment(
+                        seed=seed,
+                        agent_class=agent_class,
+                        buffer_size=buffer_size,
+                        target_update_interval=t_update,
+                        n_step=n_step,
+                        lr=lr,
+                        optimizer_eps=optimizer_eps,
+                        initial_epsilon=initial_epsilon,
+                        final_epsilon=final_epsilon,
+                        epsilon_decay_steps=epsilon_decay_steps,
+                        discount=discount,
+                        min_replay_size_before_updates=min_replay_size_before_updates,
+                        minibatch_size=minibatch_size,
+                        num_training_episodes=num_training_episodes,
+                        debug=args.debug,
+                        track_q=args.track_q
+                    )
+                    for seed in range(42, 42 + num_seeds)
+                ]
+
+                # Store results
+                perf_dict[t_update][agent_text] = results
+
+        # Combine results from both DQN and DoubleDQN for the three update intervals into one plot.
+        combined_returns = []
+        combined_labels = []
         for t_update in target_update_intervals:
-            for agent_text in ['DQN', 'DoubleDQN']:
-                file_name = f"{agent_text}_target_update_{t_update}_cartpole.png"
-                plot_alg_results(perf_dict[t_update][agent_text], file_name, label=f"{agent_text} (update {t_update})")
-        combined_target_returns = []
-        combined_target_labels = []
-        for t_update in target_update_intervals:
-            for agent_text in ['DQN', 'DoubleDQN']:
-                combined_target_returns.append(perf_dict[t_update][agent_text])
-                combined_target_labels.append(f"{agent_text} (update {t_update})")
-        plot_many_algs(combined_target_returns, combined_target_labels, None, "combined_target_ablation.png", title="Combined Target Network Ablation")
-        for agent_text in ['DQN', 'DoubleDQN']:
-            agent_returns = []
-            labels = []
-            for t_update in target_update_intervals:
-                agent_returns.append(perf_dict[t_update][agent_text])
-                labels.append(f"update {t_update}")
-            plot_many_algs(agent_returns, labels, None, f"{agent_text}_target_ablation.png", title=f"{agent_text} Target Network Ablation")
+            for agent_text in ['DQN']:
+                combined_returns.append(perf_dict[t_update][agent_text])
+                combined_labels.append(f"{agent_text} (target update {t_update})")
+
+        plot_many_algs(
+            combined_returns,
+            combined_labels,
+            None,
+            "target_network_ablation.png",
+            ylabel="Return",
+            title="Target Network Ablation Study on CartPole"
+        )
+        print("Target network ablation plot saved to target_network_ablation.png")
+
     elif args.ablation == "buffer":
-        # Buffer ablation only (n_step=1, fixed target update interval)
+        # --------------------------------------------------------------------
+        # Experiment 2: Replay Buffer Ablation Study
+        #
+        # For n=1 and a fixed target update interval (100), we test different
+        # replay buffer sizes: 100, 500, 5000, and 25000.
+        # --------------------------------------------------------------------
         n_step = 1
         target_update_interval = 100
         buffer_sizes = [100, 500, 5000, 25000]
         perf_dict = {}
+
         for buf_size in buffer_sizes:
             perf_dict[buf_size] = {}
-            for agent_class in [dqn.DQN, double_dqn.DoubleDQN]:
+            for agent_class in [dqn.DQN]:
                 agent_text = agent_class_to_text[agent_class]
-                returns_list = []
-                for seed in range(42, 42 + num_seeds):
-                    np.random.seed(seed)
-                    torch.manual_seed(seed)
-                    env = gym.make("CartPole-v1")
-                    num_actions = env.action_space.n
-                    q_network = CartpoleQNetwork(env.observation_space.low.size, num_actions)
-                    optimizer = torch.optim.Adam(q_network.parameters(), lr=lr, eps=optimizer_eps)
-                    explorer = LinearDecayEpsilonGreedyExploration(initial_epsilon, final_epsilon, epsilon_decay_steps, num_actions)
-                    buffer = replay_buffer.ReplayBuffer(buf_size, discount=discount, n_step=n_step)
-                    agent = agent_class(q_network, optimizer, buffer, explorer, discount, target_update_interval,
-                                          min_replay_size_before_updates=min_replay_size_before_updates, minibatch_size=minibatch_size)
-                    episode_returns, _ = agent_environment.agent_environment_episode_loop(agent, env, num_training_episodes, args.debug, args.track_q)
-                    returns_list.append(episode_returns)
-                perf_dict[buf_size][agent_text] = returns_list
+
+                # Parallelize across seeds
+                results = [run_single_cartpole_experiment(
+                        seed=seed,
+                        agent_class=agent_class,
+                        buffer_size=buf_size,
+                        target_update_interval=target_update_interval,
+                        n_step=n_step,
+                        lr=lr,
+                        optimizer_eps=optimizer_eps,
+                        initial_epsilon=initial_epsilon,
+                        final_epsilon=final_epsilon,
+                        epsilon_decay_steps=epsilon_decay_steps,
+                        discount=discount,
+                        min_replay_size_before_updates=min_replay_size_before_updates,
+                        minibatch_size=minibatch_size,
+                        num_training_episodes=num_training_episodes,
+                        debug=args.debug,
+                        track_q=args.track_q
+                    )
+                    for seed in range(42, 42 + num_seeds)
+                ]
+
+                # Store results
+                perf_dict[buf_size][agent_text] = results
+
+        # Combine results from both DQN and DoubleDQN for all tested buffer sizes into one plot.
+        combined_returns = []
+        combined_labels = []
         for buf_size in buffer_sizes:
-            for agent_text in ['DQN', 'DoubleDQN']:
-                file_name = f"{agent_text}_buffer_size_{buf_size}_cartpole.png"
-                plot_alg_results(perf_dict[buf_size][agent_text], file_name, label=f"{agent_text} (buffer {buf_size})")
-        combined_buffer_returns = []
-        combined_buffer_labels = []
-        for buf_size in buffer_sizes:
-            for agent_text in ['DQN', 'DoubleDQN']:
-                combined_buffer_returns.append(perf_dict[buf_size][agent_text])
-                combined_buffer_labels.append(f"{agent_text} (buffer {buf_size})")
-        plot_many_algs(combined_buffer_returns, combined_buffer_labels, None, "combined_buffer_ablation.png", title="Combined Replay Buffer Ablation")
-        for agent_text in ['DQN', 'DoubleDQN']:
-            agent_returns = []
-            labels = []
-            for buf_size in buffer_sizes:
-                agent_returns.append(perf_dict[buf_size][agent_text])
-                labels.append(f"buffer {buf_size}")
-            plot_many_algs(agent_returns, labels, None, f"{agent_text}_buffer_ablation.png", title=f"{agent_text} Replay Buffer Ablation")
-    else:
-        pass
+            for agent_text in ['DQN']:
+                combined_returns.append(perf_dict[buf_size][agent_text])
+                combined_labels.append(f"{agent_text} (buffer size {buf_size})")
+
+        plot_many_algs(
+            combined_returns,
+            combined_labels,
+            None,
+            "replay_buffer_ablation.png",
+            ylabel="Return",
+            title="Replay Buffer Ablation Study on CartPole"
+        )
+        print("Replay buffer ablation plot saved to replay_buffer_ablation.png")
